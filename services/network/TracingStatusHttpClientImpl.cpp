@@ -12,4 +12,10 @@ namespace services
         tracer.Trace() << "HttpClientImpl::StatusAvailable " << statusLine;
         HttpClientImpl::StatusAvailable(code, statusLine);
     }
+
+    void TracingStatusHttpClientImpl::Detaching()
+    {
+        tracer.Trace() << "HttpClientImpl::Detaching";
+        HttpClientImpl::Detaching();
+    }
 }

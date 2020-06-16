@@ -8,7 +8,14 @@ namespace services
         CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, const ConnectionMbedTls::ParametersWorkaround& parameters, Tracer& tracer)
         : ConnectionMbedTls(std::move(createdObserver), certificates, randomDataGenerator, parameters)
         , tracer(tracer)
-    {}
+    {
+        tracer.Trace() << "ConnectionMbedTls::ConnectionMbedTls";
+    }
+
+    TracingConnectionMbedTls::~TracingConnectionMbedTls()
+    {
+        tracer.Trace() << "ConnectionMbedTls::~ConnectionMbedTls";
+    }
 
     void TracingConnectionMbedTls::TlsInitFailure(int reason)
     {
@@ -61,13 +68,12 @@ namespace services
     infra::SharedPtr<ConnectionMbedTls> AllocatorTracingConnectionMbedTlsAdapter::Allocate(infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)>&& createdObserver,
         CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, const ConnectionMbedTls::ParametersWorkaround& parameters)
     {
-        tracer.Trace() << "AllocatorTracingConnectionMbedTlsAdapter::Allocate()";
         return allocator.Allocate(std::move(createdObserver), certificates, randomDataGenerator, parameters, tracer);
     }
 
     TracingConnectionFactoryMbedTls::TracingConnectionFactoryMbedTls(AllocatorTracingConnectionMbedTls& connectionAllocator, AllocatorConnectionMbedTlsListener& listenerAllocator, infra::BoundedList<ConnectionMbedTlsConnector>& connectors,
-        ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, Tracer& tracer, DebugLevel level, bool needsAuthenticationDefault)
-        : ConnectionFactoryMbedTls(allocatorAdapter, listenerAllocator, connectors, factory, certificates, randomDataGenerator, needsAuthenticationDefault)
+        ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, Tracer& tracer, DebugLevel level, ConnectionMbedTls::CertificateValidation certificateValidation)
+        : ConnectionFactoryMbedTls(allocatorAdapter, listenerAllocator, connectors, factory, certificates, randomDataGenerator, certificateValidation)
         , allocatorAdapter(connectionAllocator, tracer)
     {
         tracer.Trace() << "ConnectionFactoryMbedTls::ConnectionFactoryMbedTls()";

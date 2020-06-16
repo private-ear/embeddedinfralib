@@ -1,4 +1,5 @@
 #include "services/network_win/EventDispatcherWithNetwork.hpp"
+#include <ws2tcpip.h>
 
 namespace services
 {
@@ -46,6 +47,11 @@ namespace services
     void EventDispatcherWithNetwork::RegisterDatagram(const infra::SharedPtr<DatagramWin>& datagram)
     {
         datagrams.push_back(datagram);
+    }
+
+    void EventDispatcherWithNetwork::RegisterDatagramMultiple(const infra::SharedPtr<DatagramExchangeMultiple>& datagram)
+    {
+        datagramsMultiple.push_back(datagram);
     }
 
     infra::SharedPtr<void> EventDispatcherWithNetwork::Listen(uint16_t port, services::ServerConnectionObserverFactory& factory, IPVersions versions)
@@ -100,6 +106,74 @@ namespace services
         auto result = infra::MakeSharedOnHeap<DatagramWin>(*this, localPort, remote, observer);
         RegisterDatagram(result);
         return result;
+    }
+
+    infra::SharedPtr<DatagramExchange> EventDispatcherWithNetwork::Listen(DatagramExchangeObserver& observer, IPAddress localAddress, uint16_t port, IPVersions versions)
+    {
+        auto result = infra::MakeSharedOnHeap<DatagramWin>(*this, localAddress, port, observer);
+        RegisterDatagram(result);
+        return result;
+    }
+
+    infra::SharedPtr<DatagramExchange> EventDispatcherWithNetwork::Listen(DatagramExchangeObserver& observer, IPAddress localAddress, IPVersions versions)
+    {
+        auto result = infra::MakeSharedOnHeap<DatagramWin>(*this, localAddress, observer);
+        RegisterDatagram(result);
+        return result;
+    }
+
+    infra::SharedPtr<DatagramExchange> EventDispatcherWithNetwork::Connect(DatagramExchangeObserver& observer, IPAddress localAddress, UdpSocket remote)
+    {
+        auto result = infra::MakeSharedOnHeap<DatagramWin>(*this, localAddress, remote, observer);
+        RegisterDatagram(result);
+        return result;
+    }
+
+    infra::SharedPtr<DatagramExchange> EventDispatcherWithNetwork::Connect(DatagramExchangeObserver& observer, UdpSocket local, UdpSocket remote)
+    {
+        auto result = infra::MakeSharedOnHeap<DatagramWin>(*this, local, remote, observer);
+        RegisterDatagram(result);
+        return result;
+    }
+
+    void EventDispatcherWithNetwork::JoinMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv4Address multicastAddress)
+    {
+        auto datagram = std::find(datagrams.begin(), datagrams.end(), datagramExchange);
+
+        if (datagram != datagrams.end())
+            datagram->lock()->JoinMulticastGroup(multicastAddress);
+        else
+        {
+            auto datagram = std::find(datagramsMultiple.begin(), datagramsMultiple.end(), datagramExchange);
+
+            if (datagram != datagramsMultiple.end())
+                datagram->lock()->JoinMulticastGroup(multicastAddress);
+        }
+    }
+
+    void EventDispatcherWithNetwork::LeaveMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv4Address multicastAddress)
+    {
+        auto datagram = std::find(datagrams.begin(), datagrams.end(), datagramExchange);
+
+        if (datagram != datagrams.end())
+            datagram->lock()->LeaveMulticastGroup(multicastAddress);
+        else
+        {
+            auto datagram = std::find(datagramsMultiple.begin(), datagramsMultiple.end(), datagramExchange);
+
+            if (datagram != datagramsMultiple.end())
+                datagram->lock()->LeaveMulticastGroup(multicastAddress);
+        }
+    }
+
+    void EventDispatcherWithNetwork::JoinMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv6Address multicastAddress)
+    {
+        std::abort();
+    }
+
+    void EventDispatcherWithNetwork::LeaveMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv6Address multicastAddress)
+    {
+        std::abort();
     }
 
     void EventDispatcherWithNetwork::RequestExecution()
@@ -216,5 +290,6 @@ namespace services
 
         connections.remove_if([](const infra::WeakPtr<ConnectionWin>& connection) { return connection.lock() == nullptr; });
         datagrams.remove_if([](const infra::WeakPtr<DatagramWin>& datagram) { return datagram.lock() == nullptr; });
+        datagramsMultiple.remove_if([](const infra::WeakPtr<DatagramExchangeMultiple>& datagram) { return datagram.lock() == nullptr; });
     }
 }

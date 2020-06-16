@@ -121,17 +121,18 @@ namespace services
     {
         assert(socket != -1);
 
+        std::array<char, 1> option{ true };
+        setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, option.data(), option.size());
+
         if (fcntl(socket, F_SETFL, fcntl(socket, F_GETFL, 0) | O_NONBLOCK) == -1)
             std::abort();
-
-        infra::EventDispatcher::Instance().Schedule([this]() { Receive(); });
     }
 
     void DatagramBsd::BindLocal(uint16_t port)
     {
         sockaddr_in address{};
         address.sin_family = AF_INET;
-        address.sin_addr.s_addr = INADDR_ANY;
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
         address.sin_port = htons(port);
         auto result = bind(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address));
         assert(result == 0);

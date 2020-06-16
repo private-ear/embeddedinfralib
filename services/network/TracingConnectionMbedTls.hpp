@@ -11,6 +11,7 @@ namespace services
     {
     public:
         TracingConnectionMbedTls(infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)>&& createdObserver, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, const ConnectionMbedTls::ParametersWorkaround& parameters, Tracer& tracer);
+        ~TracingConnectionMbedTls();
 
         virtual void TlsInitFailure(int reason) override;
         virtual void TlsReadFailure(int reason) override;
@@ -62,7 +63,7 @@ namespace services
             , infra::BoundedList<ConnectionMbedTlsConnector>::WithMaxSize<MaxConnectors>>;
 
         TracingConnectionFactoryMbedTls(AllocatorTracingConnectionMbedTls& connectionAllocator, AllocatorConnectionMbedTlsListener& listenerAllocator, infra::BoundedList<ConnectionMbedTlsConnector>& connectors, //TICS !OLC#020
-            ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, Tracer& tracer, DebugLevel level, bool needsAuthenticationDefault = false);
+            ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, Tracer& tracer, DebugLevel level, ConnectionMbedTls::CertificateValidation certificateValidation = ConnectionMbedTls::CertificateValidation::Default);
 
     private:
         AllocatorTracingConnectionMbedTlsAdapter allocatorAdapter;

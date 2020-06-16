@@ -1,9 +1,8 @@
-macro(ccola_project name)
+macro(ccola_project)
 
-	ccola_validate_name(${name})
-	ccola_verify_not_nested(${name} CCOLA_PROJECT_NAME "Project")
-	set(CCOLA_PROJECT_NAME ${name})
-	project(${CCOLA_PROJECT_NAME} ${ARGN})
+	ccola_validate_name(${CMAKE_PROJECT_NAME})
+	ccola_verify_not_nested(${CMAKE_PROJECT_NAME} CCOLA_PROJECT_NAME "Project")
+	set(CCOLA_PROJECT_NAME ${CMAKE_PROJECT_NAME})
 
 endmacro()
 
@@ -45,7 +44,10 @@ macro(ccola_component name)
 	ccola_verify_not_nested(${name} CCOLA_COMPONENT_NAME "Component")
 	ccola_verify_nested(${name} CCOLA_PACKAGE_NAME "Component" "Package")
 
-	ccola_assign_parameters(componenttype 1 "${ARGV}")
+	set(componentlist "${ARGV}")
+	list(REMOVE_AT componentlist 0)
+	ccola_parse_selection_list(componentlist)
+	set(componenttype ${componentlist})
 
 	set(CCOLA_COMPONENT_NAME ${CCOLA_PACKAGE_NAME}.${name})
 	set(CCOLA_COMPONENT_TYPE ${componenttype})
@@ -82,6 +84,7 @@ macro(ccola_end_component)
 	unset(CCOLA_COMPONENT_DEPENDENCIES)
 	unset(CCOLA_COMPONENT_INHERITABLE_DEPENDENCIES)
 	unset(CCOLA_COMPONENT_PUBLIC_PROPERTIES)
+	unset(CCOLA_COMPONENT_EXCLUDE)
 
 endmacro()
 
@@ -111,6 +114,23 @@ macro(ccola_dependencies)
 			list(APPEND CCOLA_COMPONENT_DEPENDENCIES ${item})
 			ccola_list_remove_duplicates(CCOLA_COMPONENT_DEPENDENCIES)
 			include(${CCOLA_COMPONENT_TYPE_DIR}/add_dependency.inc)
+		endforeach()
+	endif()
+
+endmacro()
+
+macro(ccola_exclude_from_combined_library)
+
+	if(NOT CCOLA_COMPONENT_SKIP)
+		ccola_assert(CCOLA_COMPONENT_NAME "This command may only be used in a component")
+
+		set(exclude "${ARGV}")
+		ccola_parse_selection_list(exclude)
+
+		foreach(item ${exclude})
+			ccola_make_full_component_name(item)
+			list(APPEND CCOLA_COMPONENT_EXCLUDE ${item})
+			ccola_list_remove_duplicates(CCOLA_COMPONENT_EXCLUDE)
 		endforeach()
 	endif()
 
@@ -277,6 +297,23 @@ macro(ccola_get_executable_path path target)
 		#	list(APPEND CCOLA_GENERATED_EXECUTABLES generated_${path})
 		#	ccola_promote_variable(CCOLA_GENERATED_EXECUTABLES)
 		#endif()
+
+	endif()
+
+endmacro()
+
+
+macro(ccola_enable_coverage_flags)
+
+	if(${CCOLA_ARCH} STREQUAL "linux")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage -fprofile-arcs -ftest-coverage")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-arcs -ftest-coverage")
+
+        if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+            link_libraries(gcov)
+        else()
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+        endif()
 
 	endif()
 

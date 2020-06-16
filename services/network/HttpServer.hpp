@@ -108,10 +108,10 @@ namespace services
         HttpServerConnectionObserver(infra::BoundedString& buffer, HttpPageServer& httpServer);
 
         // Implementation of ConnectionObserver
-        virtual void Connected() override;
+        virtual void Attached() override;
         virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) override;
         virtual void DataReceived() override;
-        virtual void ClosingConnection() override;
+        virtual void Detaching() override;
         virtual void Close() override;
         virtual void Abort() override;
 
@@ -123,6 +123,8 @@ namespace services
     protected:
         virtual void SendingHttpResponse(infra::BoundedConstString response) {}
         virtual void ReceivedHttpRequest(infra::BoundedConstString request) {}
+
+        virtual void SetIdle();
 
         // Implementation of HttpPageServer
         virtual HttpPage* PageForRequest(const HttpRequestParser& request) override;
@@ -138,6 +140,7 @@ namespace services
         void PrepareForNextRequest();
         bool Expect100(HttpRequestParser& request) const;
         void SendBuffer();
+        void CheckIdleClose();
 
     protected:
         infra::SharedPtr<infra::StreamWriter> streamWriter;

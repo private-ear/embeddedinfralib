@@ -100,15 +100,24 @@ namespace infra
         : Timer(timerServiceId)
     {}
 
-    TimerSingleShot::TimerSingleShot(Duration duration, const infra::Function<void()>& aAction, uint32_t timerServiceId)
+    TimerSingleShot::TimerSingleShot(TimePoint time, const infra::Function<void()>& action, uint32_t timerServiceId)
         : Timer(timerServiceId)
     {
-        Start(duration, aAction);
+        Start(time, action);
+    }
+
+    TimerSingleShot::TimerSingleShot(Duration duration, const infra::Function<void()>& action, uint32_t timerServiceId)
+        : Timer(timerServiceId)
+    {
+        Start(duration, action);
     }
 
     void TimerSingleShot::Start(TimePoint time, const infra::Function<void()>& action)
     {
-        SetNextTriggerTime(time + Resolution(), action);
+        if (time < infra::TimePoint::max() - Resolution())
+            SetNextTriggerTime(time + Resolution(), action);
+        else
+            Cancel();
     }
 
     void TimerSingleShot::Start(Duration duration, const infra::Function<void()>& action)

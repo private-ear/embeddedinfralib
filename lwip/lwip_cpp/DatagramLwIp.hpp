@@ -89,7 +89,7 @@ namespace services
             StateIdle(DatagramExchangeLwIP& datagramExchange);
 
             virtual void RequestSendStream(std::size_t sendSize) override;
-            virtual void RequestSendStream(std::size_t sendSize, UdpSocket remote);
+            virtual void RequestSendStream(std::size_t sendSize, UdpSocket remote) override;
 
         private:
             DatagramExchangeLwIP& datagramExchange;
@@ -115,6 +115,7 @@ namespace services
         {
         public:
             StateBufferAllocated(DatagramExchangeLwIP& datagramExchange, pbuf* buffer, infra::Optional<UdpSocket> remote);
+            ~StateBufferAllocated();
 
         private:
             DatagramExchangeLwIP& datagramExchange;

@@ -5,10 +5,9 @@ namespace hal
 {
     TimerServiceGeneric::TimerServiceGeneric(uint32_t id)
         : infra::TimerService(id)
+        , nextTrigger(NextTrigger())
         , triggerThread([this]() { WaitForTrigger(); })
-    {
-        nextTrigger = NextTrigger();
-    }
+    {}
 
     TimerServiceGeneric::~TimerServiceGeneric()
     {
@@ -51,7 +50,7 @@ namespace hal
 
                 infra::EventDispatcher::Instance().Schedule([this]()
                 {
-                    std::unique_lock<std::recursive_mutex> lock(mutex);
+                    std::unique_lock<std::recursive_mutex> eventLock(mutex);
                     Progressed(Now());
                     NextTriggerChanged();
                 });

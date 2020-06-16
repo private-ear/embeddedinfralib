@@ -22,15 +22,16 @@ namespace services
         virtual void Publish() override;
         virtual void Subscribe() override;
         virtual void NotificationDone() override;
+        virtual void Disconnect() override;
 
         // Implementation of ConnectionObserver
         virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) override;
         virtual void DataReceived() override;
-        virtual void Connected() override;
-        virtual void ClosingConnection() override;
+        virtual void Attached() override;
+        virtual void Detaching() override;
 
     protected:
-        virtual void ReceivedNotification(infra::BoundedConstString topic, infra::BoundedConstString payload);
+        virtual infra::SharedPtr<infra::StreamWriter> ReceivedNotification(infra::BoundedConstString topic, uint32_t payloadSize);
 
     private:
         enum class PacketType : uint8_t
@@ -119,7 +120,7 @@ namespace services
 
         public:
             virtual void Connected();
-            virtual void ClosingConnection() = 0;
+            virtual void Detaching() = 0;
             virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) = 0;
             virtual void HandleDataReceived() = 0;
 
@@ -128,11 +129,7 @@ namespace services
             virtual void NotificationDone();
 
         protected:
-            infra::StreamReader& NewReceiveStream();
             MqttClientImpl& clientConnection;
-
-        private:
-            infra::SharedPtr<infra::StreamReader> receiveStream;
         };
 
         class StateConnecting
@@ -142,7 +139,7 @@ namespace services
             StateConnecting(MqttClientImpl& clientConnection, MqttClientObserverFactory& factory, infra::BoundedConstString clientId, infra::BoundedConstString username, infra::BoundedConstString password);
 
             virtual void Connected() override;
-            virtual void ClosingConnection() override;
+            virtual void Detaching() override;
             virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) override;
             virtual void HandleDataReceived() override;
 
@@ -164,7 +161,7 @@ namespace services
         public:
             using StateBase::StateBase;
 
-            virtual void ClosingConnection();
+            virtual void Detaching() override;
             virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) override;
             virtual void HandleDataReceived() override;
 
@@ -176,8 +173,9 @@ namespace services
             MqttClientImpl& ClientConnection() const;
 
         private:
+            void HandleNotificationData(infra::DataInputStream& inputStream);
             void HandlePubAck(infra::DataInputStream::WithErrorPolicy stream);
-            void HandleSubAck(infra::DataInputStream::WithErrorPolicy stream);
+            void HandleSubAck(infra::DataInputStream::WithErrorPolicy stream, infra::SharedPtr<infra::StreamReader>& reader);
             void HandlePublish(size_t packetLength, infra::DataInputStream::WithErrorPolicy stream);
             void ProcessSendOperations();
 
@@ -187,7 +185,7 @@ namespace services
             public:
                 virtual ~OperationBase() = default;
 
-                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer) = 0;
+                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer, MqttClientObserver& observer) = 0;
                 virtual std::size_t MessageSize(const MqttClientObserver& message) = 0;
             };
 
@@ -195,7 +193,7 @@ namespace services
                 : public OperationBase
             {
             public:
-                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer) override;
+                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer, MqttClientObserver& observer) override;
                 virtual std::size_t MessageSize(const MqttClientObserver& message) override;
             };
 
@@ -203,7 +201,7 @@ namespace services
                 : public OperationBase
             {
             public:
-                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer) override;
+                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer, MqttClientObserver& observer) override;
                 virtual std::size_t MessageSize(const MqttClientObserver& message) override;
             };
 
@@ -211,7 +209,7 @@ namespace services
                 : public OperationBase
             {
             public:
-                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer) override;
+                virtual void SendStreamAvailable(MqttClientImpl::StateConnected& connectedState, infra::StreamWriter& writer, MqttClientObserver& observer) override;
                 virtual std::size_t MessageSize(const MqttClientObserver& message) override;
             };
 
@@ -223,6 +221,8 @@ namespace services
             infra::BoundedDeque<OperationVariant>::WithMaxSize<2> sendOperations;
             bool executingSend = false;
             bool executingNotification = false;
+            uint16_t notificationPayloadSize = 0;
+            infra::SharedPtr<infra::StreamWriter> notificationWriter;
 
         private:
             template<class operation>
@@ -239,7 +239,6 @@ namespace services
     private:
         infra::Duration operationTimeout;
         infra::PolymorphicVariant<StateBase, StateConnecting, StateConnected> state;
-        infra::SharedPtr<MqttClientObserver> observer;
     };
 
     class MqttClientConnectorImpl
@@ -249,6 +248,9 @@ namespace services
     public:
         MqttClientConnectorImpl(infra::BoundedConstString clientId, infra::BoundedConstString username, infra::BoundedConstString password,
             infra::BoundedConstString hostname, uint16_t port, services::ConnectionFactoryWithNameResolver& connectionFactory);
+
+        void SetHostname(infra::BoundedConstString newHostname);
+        void SetClientId(infra::BoundedConstString newClientId);
 
         // Implementation of MqttClientConnector
         virtual void Connect(MqttClientObserverFactory& factory) override;

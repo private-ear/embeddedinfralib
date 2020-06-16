@@ -19,9 +19,7 @@ namespace services
     ConnectionBsd::ConnectionBsd(EventDispatcherWithNetwork& network, int socket)
         : network(network)
         , socket(socket)
-    {
-        infra::EventDispatcher::Instance().Schedule([this]() { Receive(); });
-    }
+    {}
 
     ConnectionBsd::~ConnectionBsd()
     {
@@ -75,20 +73,14 @@ namespace services
         socklen_t addressLength = sizeof(address);
         getpeername(socket, reinterpret_cast<sockaddr*>(&address), &addressLength);
 
-        return IPv4Address{
-            static_cast<uint8_t>(address.sin_addr.s_addr >> 24),
-            static_cast<uint8_t>(address.sin_addr.s_addr >> 16),
-            static_cast<uint8_t>(address.sin_addr.s_addr >> 8),
-            static_cast<uint8_t>(address.sin_addr.s_addr)
-        };
+        return services::ConvertFromUint32(htonl(address.sin_addr.s_addr));
     }
 
     void ConnectionBsd::SetObserver(infra::SharedPtr<services::ConnectionObserver> connectionObserver)
     {
-        connectionObserver->Attach(*this);
-        SetOwnership(SharedFromThis(), connectionObserver);
+        SetSelfOwnership(connectionObserver);
         network.RegisterConnection(SharedFromThis());
-        connectionObserver->Connected();
+        Attach(connectionObserver);
     }
 
     void ConnectionBsd::Receive()
@@ -109,7 +101,7 @@ namespace services
 
                 infra::EventDispatcherWithWeakPtr::Instance().Schedule([](const infra::SharedPtr<ConnectionBsd>& object)
                 {
-                    object->GetObserver().DataReceived();
+                    object->Observer().DataReceived();
                 }, SharedFromThis());
             }
             else
@@ -152,6 +144,17 @@ namespace services
         }
     }
 
+    void ConnectionBsd::SetSelfOwnership(const infra::SharedPtr<ConnectionObserver>& observer)
+    {
+        self = SharedFromThis();
+    }
+
+    void ConnectionBsd::ResetOwnership()
+    {
+        Detach();
+        self = nullptr;
+    }
+
     void ConnectionBsd::TryAllocateSendStream()
     {
         assert(streamWriter.Allocatable());
@@ -161,7 +164,7 @@ namespace services
             infra::EventDispatcherWithWeakPtr::Instance().Schedule([size](const infra::SharedPtr<ConnectionBsd>& object)
             {
                 infra::SharedPtr<infra::StreamWriter> writer = object->streamWriter.Emplace(*object, size);
-                object->GetObserver().SendStreamAvailable(std::move(writer));
+                object->Observer().SendStreamAvailable(std::move(writer));
             }, SharedFromThis());
 
             requestedSendSize = 0;

@@ -13,7 +13,9 @@ TEST(HttpTest, parse_components_from_url)
 {
     EXPECT_EQ("http", services::SchemeFromUrl("http://host/path"));
     EXPECT_EQ("host", services::HostFromUrl("http://host/path"));
+    EXPECT_EQ("host", services::HostFromUrl("http://host?query"));
     EXPECT_EQ("/path", services::PathFromUrl("http://host/path"));
+    EXPECT_EQ("?query", services::PathFromUrl("http://host?query"));
     EXPECT_EQ("/path/more", services::PathFromUrl("http://host/path/more"));
 }
 
@@ -97,9 +99,6 @@ class HttpClientTest
 {
 public:
     HttpClientTest()
-        : connector(connectionFactory)
-        , connectionPtr(infra::UnOwnedSharedPtr(connection))
-        , clientPtr(infra::UnOwnedSharedPtr(client))
     {
         EXPECT_CALL(factory, Hostname()).WillRepeatedly(testing::Return("localhost"));
         EXPECT_CALL(factory, Port()).WillRepeatedly(testing::Return(80));
@@ -109,30 +108,33 @@ public:
         connector.Connect(factory);
     }
 
+    ~HttpClientTest()
+    {
+        EXPECT_CALL(client, Detaching()).Times(testing::AnyNumber());
+    }
+
     void Connect()
     {
         EXPECT_CALL(factory, ConnectionEstablished(testing::_)).WillOnce(testing::Invoke([this](infra::AutoResetFunction<void(infra::SharedPtr<services::HttpClientObserver> client)>& createdClient)
         {
-            EXPECT_CALL(client, Connected());
+            EXPECT_CALL(client, Attached());
             createdClient(clientPtr);
         }));
 
         connector.ConnectionEstablished([this](infra::SharedPtr<services::ConnectionObserver> connectionObserver)
         {
-            connectionObserver->Attach(connection);
-            connection.SetOwnership(nullptr, connectionObserver);
-            connectionObserver->Connected();
+            connection.Attach(connectionObserver);
         });
     }
 
+    testing::StrictMock<services::HttpClientObserverMock> client;
     testing::StrictMock<services::ConnectionFactoryWithNameResolverMock> connectionFactory;
     testing::StrictMock<services::HttpClientObserverFactoryMock> factory;
     testing::StrictMock<services::HttpClientObserverFactoryMock> factory2;
-    services::HttpClientConnectorImpl<> connector;
+    services::HttpClientConnectorImpl<> connector{ connectionFactory };
     testing::StrictMock<services::ConnectionStubWithAckReceivedMock> connection;
-    infra::SharedPtr<services::Connection> connectionPtr;
-    testing::StrictMock<services::HttpClientObserverMock> client;
-    infra::SharedPtr<services::HttpClientObserver> clientPtr;
+    infra::SharedPtr<services::Connection> connectionPtr{ infra::UnOwnedSharedPtr(connection) };
+    infra::SharedPtr<services::HttpClientObserver> clientPtr{ infra::UnOwnedSharedPtr(client) };
 };
 
 TEST_F(HttpClientTest, refused_connection_propagates_to_HttpClientFactory)
@@ -180,7 +182,7 @@ TEST_F(HttpClientTest, second_connection_is_tried_when_first_is_closed)
 
     Connect();
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     EXPECT_CALL(connectionFactory, Connect(testing::Ref(connector)));
     connection.AbortAndDestroy();
 }
@@ -190,7 +192,7 @@ TEST_F(HttpClientTest, closed_connection_results_in_ClosingConnection)
     Connect();
 
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     connection.AbortAndDestroy();
 }
 
@@ -199,7 +201,7 @@ TEST_F(HttpClientTest, Close_propagates_to_Connection)
     Connect();
 
     EXPECT_CALL(connection, CloseAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     client.Subject().Close();
 }
 
@@ -215,15 +217,13 @@ TEST_F(HttpClientTest, after_ConnectionEstablished_HttpClient_is_connected)
 {
     EXPECT_CALL(factory, ConnectionEstablished(testing::_)).WillOnce(testing::Invoke([this](infra::AutoResetFunction<void(infra::SharedPtr<services::HttpClientObserver> client)>& createdClient)
     {
-        EXPECT_CALL(client, Connected());
+        EXPECT_CALL(client, Attached());
         createdClient(clientPtr);
     }));
 
     connector.ConnectionEstablished([this](infra::SharedPtr<services::ConnectionObserver> connectionObserver)
     {
-        connectionObserver->Attach(connection);
-        connection.SetOwnership(nullptr, connectionObserver);
-        connectionObserver->Connected();
+        connection.Attach(connectionObserver);
     });
 }
 
@@ -234,7 +234,17 @@ TEST_F(HttpClientTest, Get_request_is_executed)
 
     ExecuteAllActions();
 
-    EXPECT_EQ("GET /api/thing HTTP/1.1\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("GET /api/thing HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
+}
+
+TEST_F(HttpClientTest, Get_request_is_executed_with_empty_path)
+{
+    Connect();
+    client.Subject().Get("/");
+
+    ExecuteAllActions();
+
+    EXPECT_EQ("GET / HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Head_request_is_executed)
@@ -244,7 +254,7 @@ TEST_F(HttpClientTest, Head_request_is_executed)
 
     ExecuteAllActions();
 
-    EXPECT_EQ("HEAD /api/thing HTTP/1.1\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("HEAD /api/thing HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Connect_request_is_executed)
@@ -253,7 +263,7 @@ TEST_F(HttpClientTest, Connect_request_is_executed)
     client.Subject().Connect("/api/thing");
 
     ExecuteAllActions();
-    EXPECT_EQ("CONNECT /api/thing HTTP/1.1\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("CONNECT /api/thing HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Options_request_is_executed)
@@ -262,7 +272,7 @@ TEST_F(HttpClientTest, Options_request_is_executed)
     client.Subject().Options("/api/thing");
 
     ExecuteAllActions();
-    EXPECT_EQ("OPTIONS /api/thing HTTP/1.1\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("OPTIONS /api/thing HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Post_request_is_executed)
@@ -271,7 +281,7 @@ TEST_F(HttpClientTest, Post_request_is_executed)
     client.Subject().Post("/api/thing", "body contents");
 
     ExecuteAllActions();
-    EXPECT_EQ("POST /api/thing HTTP/1.1\r\nhost:localhost\r\ncontent-length:13\r\n\r\nbody contents", connection.SentDataAsString());
+    EXPECT_EQ("POST /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:13\r\n\r\nbody contents", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Put_request_is_executed)
@@ -280,7 +290,7 @@ TEST_F(HttpClientTest, Put_request_is_executed)
     client.Subject().Put("/api/thing", "body contents");
 
     ExecuteAllActions();
-    EXPECT_EQ("PUT /api/thing HTTP/1.1\r\nhost:localhost\r\ncontent-length:13\r\n\r\nbody contents", connection.SentDataAsString());
+    EXPECT_EQ("PUT /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:13\r\n\r\nbody contents", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Patch_request_is_executed)
@@ -289,7 +299,7 @@ TEST_F(HttpClientTest, Patch_request_is_executed)
     client.Subject().Patch("/api/thing", "body contents");
 
     ExecuteAllActions();
-    EXPECT_EQ("PATCH /api/thing HTTP/1.1\r\nhost:localhost\r\ncontent-length:13\r\n\r\nbody contents", connection.SentDataAsString());
+    EXPECT_EQ("PATCH /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:13\r\n\r\nbody contents", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, Delete_request_is_executed)
@@ -298,18 +308,18 @@ TEST_F(HttpClientTest, Delete_request_is_executed)
     client.Subject().Delete("/api/thing", {});
 
     ExecuteAllActions();
-    EXPECT_EQ("DELETE /api/thing HTTP/1.1\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("DELETE /api/thing HTTP/1.1\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, request_contains_correct_headers)
 {
     Connect();
-    std::array<services::HttpHeader, 2> headers{ services::HttpHeader{ "authorization", "Basic Y29ubmVjdGl2aXR5OmlzY29vbA==" }, { "connection", "close" } };
+    std::array<services::HttpHeader, 2> headers{ services::HttpHeader{ "Authorization", "Basic Y29ubmVjdGl2aXR5OmlzY29vbA==" }, { "Connection", "close" } };
 
     client.Subject().Get("/api/thing", headers);
 
     ExecuteAllActions();
-    EXPECT_EQ("GET /api/thing HTTP/1.1\r\nauthorization:Basic Y29ubmVjdGl2aXR5OmlzY29vbA==\r\nconnection:close\r\nhost:localhost\r\n\r\n", connection.SentDataAsString());
+    EXPECT_EQ("GET /api/thing HTTP/1.1\r\nAuthorization:Basic Y29ubmVjdGl2aXR5OmlzY29vbA==\r\nConnection:close\r\nHost:localhost\r\n\r\n", connection.SentDataAsString());
 }
 
 TEST_F(HttpClientTest, incorrect_response_version_should_not_call_StatusAvailable)
@@ -320,7 +330,7 @@ TEST_F(HttpClientTest, incorrect_response_version_should_not_call_StatusAvailabl
 
     EXPECT_CALL(connection, AckReceivedMock());
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     client.Subject().Get("/");
     ExecuteAllActions();
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/X.Y 200 Success\r\n")));
@@ -334,7 +344,7 @@ TEST_F(HttpClientTest, incorrect_response_code_should_not_call_StatusAvailable)
 
     EXPECT_CALL(connection, AckReceivedMock());
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     client.Subject().Get("/");
     ExecuteAllActions();
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.1 900 Invalid\r\n")));
@@ -408,7 +418,7 @@ TEST_F(HttpClientTest, too_long_header_is_rejected)
 
     EXPECT_CALL(connection, AckReceivedMock());
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     client.Subject().Get("/");
     ExecuteAllActions();
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.0 200 Success\r\n012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\r\n")));
@@ -462,6 +472,23 @@ TEST_F(HttpClientTest, ResponseAvailable_forwards_response_body_to_client)
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.1 200 Success\r\nDate:Sat, 28 Nov 2009 04:36:25 GMT\r\nExpires:-1\r\nContent-Length:10\r\n\r\nbody\r\ndata")));
 }
 
+TEST_F(HttpClientTest, ResponseAvailable_with_lower_case_headers_forwards_response_body_to_client)
+{
+    Connect();
+
+    EXPECT_CALL(connection, AckReceivedMock()).Times(2);
+    EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
+    EXPECT_CALL(client, BodyAvailable(testing::_)).WillOnce(testing::Invoke([this](infra::SharedPtr<infra::StreamReader>& reader) {
+        infra::DataInputStream::WithErrorPolicy stream(*reader, infra::noFail);
+        EXPECT_EQ("body\r\ndata", infra::ByteRangeAsString(stream.ContiguousRange()));
+    }));
+    EXPECT_CALL(client, BodyComplete());
+
+    client.Subject().Get("/");
+    ExecuteAllActions();
+    connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.1 200 Success\r\ncontent-length:10\r\n\r\nbody\r\ndata")));
+}
+
 TEST_F(HttpClientTest, ResponseAvailable_without_ContentLength_is_rejected)
 {
     Connect();
@@ -469,7 +496,7 @@ TEST_F(HttpClientTest, ResponseAvailable_without_ContentLength_is_rejected)
     EXPECT_CALL(connection, AckReceivedMock());
     EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
 
     client.Subject().Get("/");
     ExecuteAllActions();
@@ -545,7 +572,7 @@ TEST_F(HttpClientTest, data_in_excess_of_ContentLength_is_ignored)
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.1 200 Success\r\nDate:Sat, 28 Nov 2009 04:36:25 GMT\r\nExpires:-1\r\nContent-Length:10\r\n\r\nbody\r\ndata")));
 
     EXPECT_CALL(connection, AbortAndDestroyMock());
-    EXPECT_CALL(client, ClosingConnection());
+    EXPECT_CALL(client, Detaching());
     connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("extradata")));
 }
 
@@ -559,7 +586,7 @@ TEST_F(HttpClientTest, Close_while_DataAvailable_is_handled)
     EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK)).WillOnce(testing::Invoke([this](services::HttpStatusCode result)
     {
         EXPECT_CALL(connection, CloseAndDestroyMock());
-        EXPECT_CALL(client, ClosingConnection());
+        EXPECT_CALL(client, Detaching());
         client.Subject().Close();
     }));
 
@@ -579,7 +606,7 @@ TEST_F(HttpClientTest, Close_while_BodyAvailable_is_handled)
     {
         reader = nullptr;
         EXPECT_CALL(connection, CloseAndDestroyMock());
-        EXPECT_CALL(client, ClosingConnection());
+        EXPECT_CALL(client, Detaching());
         client.Subject().Close();
     }));
 
@@ -627,14 +654,14 @@ TEST_F(HttpClientTest, closed_before_reader_is_reset)
     client.Subject().Get("/");
     ExecuteAllActions();
 
-    auto clientConnection = connection.Observer();  // Keep the client alive so that reader may be kept alive a little longer
+    auto clientConnection = connection.ObserverPtr();  // Keep the client alive so that reader may be kept alive a little longer
 
     EXPECT_CALL(connection, AckReceivedMock()).Times(2);
     EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
     EXPECT_CALL(client, BodyAvailable(testing::_)).WillOnce(testing::Invoke([this](infra::SharedPtr<infra::StreamReader>& reader)
     {
         EXPECT_CALL(connection, CloseAndDestroyMock());
-        EXPECT_CALL(client, ClosingConnection());
+        EXPECT_CALL(client, Detaching());
         client.Subject().Close();
         reader = nullptr;
     }));
@@ -650,7 +677,7 @@ TEST_F(HttpClientTest, Put_request_with_large_body_is_executed)
 
     EXPECT_CALL(client, SendStreamAvailable(testing::_)).WillOnce(testing::Invoke([this](infra::SharedPtr<infra::StreamWriter>& writer)
     {
-        EXPECT_EQ("PUT /api/thing HTTP/1.1\r\nhost:localhost\r\ncontent-length:1024\r\n\r\n", connection.SentDataAsString());
+        EXPECT_EQ("PUT /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:1024\r\n\r\n", connection.SentDataAsString());
         connection.sentData.clear();
 
         infra::TextOutputStream::WithErrorPolicy stream(*writer);
@@ -684,7 +711,7 @@ TEST_F(HttpClientTest, Post_request_with_large_body_is_executed)
 
     EXPECT_CALL(client, SendStreamAvailable(testing::_)).WillOnce(testing::Invoke([this](infra::SharedPtr<infra::StreamWriter>& writer)
     {
-        EXPECT_EQ("POST /api/thing HTTP/1.1\r\nhost:localhost\r\ncontent-length:1024\r\n\r\n", connection.SentDataAsString());
+        EXPECT_EQ("POST /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:1024\r\n\r\n", connection.SentDataAsString());
         connection.sentData.clear();
 
         infra::TextOutputStream::WithErrorPolicy stream(*writer);
@@ -703,6 +730,52 @@ TEST_F(HttpClientTest, Post_request_with_large_body_is_executed)
     }));
     ExecuteAllActions();
 
+    EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
+    EXPECT_CALL(connection, AckReceivedMock());
+    EXPECT_CALL(client, BodyComplete());
+    client.Subject().Get("/");
+    ExecuteAllActions();
+    connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.0 200 Success\r\nContent-Length:0\r\n\r\n")));
+}
+
+TEST_F(HttpClientTest, Put_request_with_unknown_body_size_is_executed)
+{
+    Connect();
+
+    EXPECT_CALL(client, FillContent(testing::_)).WillRepeatedly(testing::Invoke([this](infra::StreamWriter& writer)
+    {
+        infra::TextOutputStream::WithErrorPolicy stream(writer);
+        stream << "data";
+    }));
+
+    client.Subject().Put("/api/thing");
+    ExecuteAllActions();
+
+    EXPECT_EQ("PUT /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:4\r\n\r\ndata", connection.SentDataAsString());
+
+    EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
+    EXPECT_CALL(connection, AckReceivedMock());
+    EXPECT_CALL(client, BodyComplete());
+    client.Subject().Get("/");
+    ExecuteAllActions();
+    connection.SimulateDataReceived(infra::StringAsByteRange(infra::BoundedConstString("HTTP/1.0 200 Success\r\nContent-Length:0\r\n\r\n")));
+}
+
+TEST_F(HttpClientTest, Post_request_with_unknown_body_size_is_executed)
+{
+    Connect();
+
+    EXPECT_CALL(client, FillContent(testing::_)).WillRepeatedly(testing::Invoke([this](infra::StreamWriter& writer)
+    {
+        infra::TextOutputStream::WithErrorPolicy stream(writer);
+        stream << "data";
+    }));
+
+    client.Subject().Post("/api/thing");
+    ExecuteAllActions();
+
+    EXPECT_EQ("POST /api/thing HTTP/1.1\r\nHost:localhost\r\nContent-Length:4\r\n\r\ndata", connection.SentDataAsString());
+    
     EXPECT_CALL(client, StatusAvailable(services::HttpStatusCode::OK));
     EXPECT_CALL(connection, AckReceivedMock());
     EXPECT_CALL(client, BodyComplete());

@@ -6,6 +6,7 @@
 #include "infra/stream/ByteOutputStream.hpp"
 #include "infra/util/BoundedList.hpp"
 #include "infra/util/ByteRange.hpp"
+#include "infra/util/IntrusiveList.hpp"
 #include "infra/util/SharedObjectAllocatorFixedSize.hpp"
 #include "infra/util/SharedOptional.hpp"
 #include "infra/util/WithStorage.hpp"
@@ -28,6 +29,7 @@ namespace services
     class ConnectionLwIp
         : public services::Connection
         , public infra::EnableSharedFromThis<ConnectionLwIp>
+        , public infra::IntrusiveList<ConnectionLwIp>::NodeType
     {
     public:
         ConnectionLwIp(tcp_pcb* control);
@@ -39,7 +41,9 @@ namespace services
         virtual void AckReceived() override;
         virtual void CloseAndDestroy() override;
         virtual void AbortAndDestroy() override;
-        
+
+        void SetSelfOwnership(const infra::SharedPtr<ConnectionObserver>& observer);
+        void ResetOwnership();
         IPAddress IpAddress() const;
 
     private:
@@ -54,6 +58,7 @@ namespace services
         err_t Recv(pbuf* p, err_t err);
         void Err(err_t err);
         err_t Sent(uint16_t len);
+        void RemoveFromPool(infra::ConstByteRange range);
 
     private:
         class StreamWriterLwIp
@@ -68,18 +73,33 @@ namespace services
         };
 
         class StreamReaderLwIp
-            : public infra::BoundedDequeInputStreamReader
+            : public infra::StreamReaderWithRewinding
         {
         public:
             StreamReaderLwIp(ConnectionLwIp& connection);
 
             void ConsumeRead();
 
+            virtual void Extract(infra::ByteRange range, infra::StreamErrorPolicy& errorPolicy) override;
+            virtual uint8_t Peek(infra::StreamErrorPolicy& errorPolicy) override;
+            virtual infra::ConstByteRange ExtractContiguousRange(std::size_t max) override;
+            virtual infra::ConstByteRange PeekContiguousRange(std::size_t start) override;
+            virtual bool Empty() const override;
+            virtual std::size_t Available() const override;
+            virtual std::size_t ConstructSaveMarker() const override;
+            virtual void Rewind(std::size_t marker) override;
+
         private:
             ConnectionLwIp& connection;
+            std::size_t offset = 0;
+            pbuf* currentPbuf;
+            std::size_t offsetInCurrentPbuf;
         };
 
     private:
+        friend class ListenerLwIp;
+        friend class ConnectorLwIp;
+
         tcp_pcb* control;
         std::size_t requestedSendSize = 0;
 
@@ -89,10 +109,14 @@ namespace services
         infra::ConstByteRange sendBuffer;
         infra::TimerSingleShot retrySendTimer;
         infra::BoundedDeque<infra::ConstByteRange>::WithMaxSize<tcpSndQueueLen> sendBuffers;
-        infra::BoundedDeque<std::array<uint8_t, TCP_MSS>>::WithMaxSize<tcpSndQueueLen> sendMemoryPool;
+        static infra::BoundedList<std::array<uint8_t, TCP_MSS>>::WithMaxSize<tcpSndQueueLen> sendMemoryPool;
+        static infra::IntrusiveList<ConnectionLwIp> sendMemoryPoolWaiting;
 
-        infra::BoundedDeque<uint8_t>::WithMaxSize<tcpWnd> receiveBuffer;
+        pbuf* receivedData = nullptr;
+        std::size_t consumed = 0;
         bool dataReceivedScheduled = false;
+
+        infra::SharedPtr<void> self;
     };
 
     using AllocatorConnectionLwIp = infra::SharedObjectAllocator<ConnectionLwIp, void(tcp_pcb*)>;

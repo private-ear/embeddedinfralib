@@ -5,8 +5,10 @@ ccola_component(network_test gmock_test)
         TestConnectionMbedTls.cpp
         TestConnectionSerial.cpp
         TestDnsResolver.cpp
+        TestDnsServer.cpp
         TestExclusiveConnection.cpp
         TestHttpClient.cpp
+        TestHttpClientAuthentication.cpp
         TestHttpClientBasic.cpp
         TestHttpClientJson.cpp
         TestHttpServer.cpp
@@ -20,6 +22,7 @@ ccola_component(network_test gmock_test)
         TestWebSocketClientConnectionObserver.cpp
         TestWebSocketIntegration.cpp
         TestWebSocketServerConnectionObserver.cpp
+        TestWiFiNetwork.cpp
     )
 
     ccola_dependencies(

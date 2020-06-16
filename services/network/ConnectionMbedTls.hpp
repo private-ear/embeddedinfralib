@@ -22,15 +22,23 @@ namespace services
         , public infra::EnableSharedFromThis<ConnectionMbedTls>
     {
     public:
+        enum class CertificateValidation : uint8_t
+        {
+            Default,
+            Enabled,
+            Disabled
+        };
+
         struct ServerParameters
         {
             mbedtls_ssl_cache_context& serverCache;
-            bool clientAuthenticationNeeded;
+            CertificateValidation certificateValidation;
         };
 
         struct ClientParameters
         {
             mbedtls_ssl_session& clientSession;
+            CertificateValidation certificateValidation;
         };
 
         using Parameters = infra::Variant<ServerParameters, ClientParameters>;
@@ -49,8 +57,8 @@ namespace services
         // Implementation of ConnectionObserver
         virtual void SendStreamAvailable(infra::SharedPtr<infra::StreamWriter>&& writer) override;
         virtual void DataReceived() override;
-        virtual void Connected() override;
-        virtual void ClosingConnection() override;
+        virtual void Attached() override;
+        virtual void Detaching() override;
         virtual void Close() override;
         virtual void Abort() override;
 
@@ -70,6 +78,7 @@ namespace services
 
     private:
         void InitTls();
+        int GetAuthMode(const ParametersWorkaround& parameters) const;
         void TryAllocateSendStream();
         void TryAllocateEncryptedSendStream();
         static int StaticSslSend(void* context, const unsigned char* buffer, std::size_t size);
@@ -120,6 +129,7 @@ namespace services
 
         infra::SharedOptional<StreamWriterMbedTls> streamWriter;
         std::size_t requestedSendSize = 0;
+        bool dataReceivedScheduled = false;
         bool flushScheduled = false;
         infra::SharedOptional<StreamReaderMbedTls> receiveReader;
 
@@ -127,6 +137,8 @@ namespace services
         std::size_t encryptedSendStreamSize = 0;
 
         bool initialHandshake = true;
+        bool closing = false;
+        bool aborting = false;
     };
 
     using AllocatorConnectionMbedTls = infra::SharedObjectAllocator<ConnectionMbedTls,
@@ -138,7 +150,7 @@ namespace services
     {
     public:
         ConnectionMbedTlsListener(AllocatorConnectionMbedTls& allocator, ServerConnectionObserverFactory& factory,
-            CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, mbedtls_ssl_cache_context& serverCache, bool clientAuthenticationNeeded);
+            CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, mbedtls_ssl_cache_context& serverCache, ConnectionMbedTls::CertificateValidation certificateValidation);
 
         virtual void ConnectionAccepted(infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)>&& createdObserver, services::IPAddress address) override;
 
@@ -150,12 +162,12 @@ namespace services
         CertificatesMbedTls& certificates;
         hal::SynchronousRandomDataGenerator& randomDataGenerator;
         mbedtls_ssl_cache_context& serverCache;
-        bool clientAuthenticationNeeded;
+        ConnectionMbedTls::CertificateValidation certificateValidation;
         infra::SharedPtr<void> listener;
     };
 
     using AllocatorConnectionMbedTlsListener = infra::SharedObjectAllocator<ConnectionMbedTlsListener,
-        void(AllocatorConnectionMbedTls& allocator, ServerConnectionObserverFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, mbedtls_ssl_cache_context& serverCache, bool clientAuthenticationNeeded)>;
+        void(AllocatorConnectionMbedTls& allocator, ServerConnectionObserverFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, mbedtls_ssl_cache_context& serverCache, ConnectionMbedTls::CertificateValidation certificateValidation)>;
 
     class ConnectionFactoryMbedTls;
 
@@ -171,9 +183,13 @@ namespace services
         virtual void ConnectionFailed(ConnectFailReason reason) override;
 
     private:
+        void CancelConnect();
+
+    private:
         friend class ConnectionFactoryMbedTls;
 
         ConnectionFactoryMbedTls& factory;
+        ConnectionFactory& networkFactory;
         ClientConnectionObserverFactory& clientFactory;
     };
 
@@ -192,7 +208,7 @@ namespace services
                 , infra::BoundedList<ConnectionMbedTlsConnector>::WithMaxSize<MaxConnectors>>;
 
         ConnectionFactoryMbedTls(AllocatorConnectionMbedTls& connectionAllocator, AllocatorConnectionMbedTlsListener& listenerAllocator, infra::BoundedList<ConnectionMbedTlsConnector>& connectors,
-            ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, bool needsAuthenticationDefault = false);
+            ConnectionFactory& factory, CertificatesMbedTls& certificates, hal::SynchronousRandomDataGenerator& randomDataGenerator, ConnectionMbedTls::CertificateValidation certificateValidation = ConnectionMbedTls::CertificateValidation::Default);
         ~ConnectionFactoryMbedTls();
 
         virtual infra::SharedPtr<void> Listen(uint16_t port, ServerConnectionObserverFactory& connectionObserverFactory, IPVersions versions = IPVersions::both) override;
@@ -201,9 +217,6 @@ namespace services
 
         infra::SharedPtr<ConnectionMbedTls> Allocate(infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)>&& createdObserver, IPAddress address);
         void Remove(ConnectionMbedTlsConnector& connector);
-
-    protected:
-        virtual bool NeedsAuthentication(uint16_t port) const;
 
     private:
         void TryConnect();
@@ -219,7 +232,7 @@ namespace services
         mbedtls_ssl_cache_context serverCache;
         mbedtls_ssl_session clientSession = {};
         IPAddress previousAddress;
-        bool needsAuthenticationDefault;
+        ConnectionMbedTls::CertificateValidation certificateValidation;
     };
 
     class ConnectionFactoryWithNameResolverForTls

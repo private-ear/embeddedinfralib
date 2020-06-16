@@ -18,10 +18,10 @@ public:
         : connectionFactory(network, serverCertificates, randomDataGenerator)
         , thisListener(infra::UnOwnedSharedPtr(*this))
     {
-        serverCertificates.AddCertificateAuthority(infra::BoundedConstString(mbedtls_test_cas_pem, mbedtls_test_cas_pem_len));
+        serverCertificates.AddCertificateAuthority(infra::BoundedConstString(mbedtls_test_ca_crt, mbedtls_test_ca_crt_len));
         serverCertificates.AddOwnCertificate(infra::BoundedConstString(mbedtls_test_srv_crt, mbedtls_test_srv_crt_len), infra::BoundedConstString(mbedtls_test_srv_key, mbedtls_test_srv_key_len));
 
-        clientCertificates.AddCertificateAuthority(infra::BoundedConstString(mbedtls_test_cas_pem, mbedtls_test_cas_pem_len));
+        clientCertificates.AddCertificateAuthority(infra::BoundedConstString(mbedtls_test_ca_crt, mbedtls_test_ca_crt_len));
         clientCertificates.AddOwnCertificate(infra::BoundedConstString(mbedtls_test_cli_crt, mbedtls_test_cli_crt_len), infra::BoundedConstString(mbedtls_test_cli_key, mbedtls_test_cli_key_len));
     }
 
@@ -78,6 +78,7 @@ TEST_F(ConnectionMbedTlsTest, create_connection)
     {
         createdObserver(observer1.Emplace());
     }));
+    EXPECT_CALL(clientObserverFactory, Address());
     EXPECT_CALL(clientObserverFactory, ConnectionEstablishedMock(testing::_))
         .WillOnce(testing::Invoke([&](infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)> createdObserver)
     {
@@ -105,6 +106,7 @@ TEST_F(ConnectionMbedTlsTest, send_and_receive_data)
     {
         createdObserver(observer1.Emplace());
     }));
+    EXPECT_CALL(clientObserverFactory, Address());
     EXPECT_CALL(clientObserverFactory, ConnectionEstablishedMock(testing::_))
         .WillOnce(testing::Invoke([&](infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)> createdObserver)
     {
@@ -141,6 +143,7 @@ TEST_F(ConnectionMbedTlsTest, reopen_connection)
         {
             createdObserver(observer1.Emplace());
         }));
+        EXPECT_CALL(clientObserverFactory, Address());
         EXPECT_CALL(clientObserverFactory, ConnectionEstablishedMock(testing::_))
             .WillOnce(testing::Invoke([&](infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)> createdObserver)
         {
@@ -162,6 +165,7 @@ TEST_F(ConnectionMbedTlsTest, reopen_connection)
         {
             createdObserver(observer1.Emplace());
         }));
+        EXPECT_CALL(clientObserverFactory, Address());
         EXPECT_CALL(clientObserverFactory, ConnectionEstablishedMock(testing::_))
             .WillOnce(testing::Invoke([&](infra::AutoResetFunction<void(infra::SharedPtr<services::ConnectionObserver> connectionObserver)> createdObserver)
         {

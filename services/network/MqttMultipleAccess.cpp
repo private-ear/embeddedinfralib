@@ -2,87 +2,112 @@
 
 namespace services
 {
-    void MqttMultipleAccessMaster::Publish()
+    void MqttMultipleAccessMaster::Register(MqttMultipleAccess& access)
     {
+        accesses.push_front(access);
+    }
+
+    void MqttMultipleAccessMaster::Unregister(MqttMultipleAccess& access)
+    {
+        accesses.erase_slow(access);
+    }
+
+    void MqttMultipleAccessMaster::Publish(MqttMultipleAccess& access)
+    {
+        assert(active == nullptr);
+        active = &access;
         MqttClientObserver::Subject().Publish();
     }
 
-    void MqttMultipleAccessMaster::Subscribe()
+    void MqttMultipleAccessMaster::Subscribe(MqttMultipleAccess& access)
     {
+        assert(active == nullptr);
+        active = &access;
         MqttClientObserver::Subject().Subscribe();
     }
 
     void MqttMultipleAccessMaster::NotificationDone()
     {
-        --notificationsSent;
-
-        if (notificationsSent == 0)
-            MqttClientObserver::Subject().NotificationDone();
+        MqttClientObserver::Subject().NotificationDone();
     }
 
-    void MqttMultipleAccessMaster::Connected()
+    void MqttMultipleAccessMaster::Disconnect()
+    {
+        MqttClientObserver::Subject().Disconnect();
+    }
+
+    void MqttMultipleAccessMaster::ReleaseActive()
+    {
+        assert(active != nullptr);
+        active = nullptr;
+    }
+
+    void MqttMultipleAccessMaster::Attached()
     {
         for (auto& access : accesses)
-            access.Connected();
+            access.Attached();
+    }
+
+    void MqttMultipleAccessMaster::Detaching()
+    {
+        for (auto& access : accesses)
+            access.Detaching();
     }
 
     void MqttMultipleAccessMaster::PublishDone()
     {
-        GetObserver().PublishDone();
+        active->PublishDone();
     }
 
     void MqttMultipleAccessMaster::SubscribeDone()
     {
-        GetObserver().SubscribeDone();
+        active->SubscribeDone();
     }
 
-    void MqttMultipleAccessMaster::ReceivedNotification(infra::BoundedConstString topic, infra::BoundedConstString payload)
+    infra::SharedPtr<infra::StreamWriter> MqttMultipleAccessMaster::ReceivedNotification(infra::BoundedConstString topic, uint32_t payloadSize)
     {
-        notificationsSent = 1;
-
         for (auto& access : accesses)
         {
-            ++notificationsSent;
-            access.ReceivedNotification(topic, payload);
+            auto result = access.ReceivedNotification(topic, payloadSize);
+            if (result != nullptr)
+                return result;
         }
 
-        NotificationDone();
-    }
-
-    void MqttMultipleAccessMaster::ClosingConnection()
-    {
-        for (auto& access : accesses)
-            access.ClosingConnection();
+        std::abort();
     }
 
     void MqttMultipleAccessMaster::FillTopic(infra::StreamWriter& writer) const
     {
-        GetObserver().FillTopic(writer);
+        active->FillTopic(writer);
     }
 
     void MqttMultipleAccessMaster::FillPayload(infra::StreamWriter& writer) const
     {
-        GetObserver().FillPayload(writer);
+        active->FillPayload(writer);
     }
 
-    MqttMultipleAccess::MqttMultipleAccess(MqttMultipleAccessMaster& master)
+    MqttMultipleAccess::MqttMultipleAccess(MqttMultipleAccessMaster& master, MqttClientObserver& observer)
         : master(master)
         , claimer(master)
+        , observer(observer)
     {
-        master.accesses.push_front(*this);
+        master.Register(*this);
+        if (master.IsAttached())
+            Attached();
     }
 
     MqttMultipleAccess::~MqttMultipleAccess()
     {
-        master.accesses.erase_slow(*this);
+        if (master.IsAttached())
+            Detaching();
+        master.Unregister(*this);
     }
 
     void MqttMultipleAccess::Publish()
     {
         claimer.Claim([this]()
         {
-            Attach(master);
-            master.Publish();
+            master.Publish(*this);
         });
     }
 
@@ -90,8 +115,7 @@ namespace services
     {
         claimer.Claim([this]()
         {
-            Attach(master);
-            master.Subscribe();
+            master.Subscribe(*this);
         });
     }
 
@@ -100,42 +124,47 @@ namespace services
         master.NotificationDone();
     }
 
-    void MqttMultipleAccess::Connected()
+    void MqttMultipleAccess::Disconnect()
     {
-        GetObserver().Connected();
+        master.Disconnect();
+    }
+
+    void MqttMultipleAccess::Attached()
+    {
+        Attach(infra::UnOwnedSharedPtr(observer));
+    }
+
+    void MqttMultipleAccess::Detaching()
+    {
+        Detach();
     }
 
     void MqttMultipleAccess::PublishDone()
     {
-        Detach();
+        master.ReleaseActive();
         claimer.Release();
-        GetObserver().PublishDone();
+        Observer().PublishDone();
     }
 
     void MqttMultipleAccess::SubscribeDone()
     {
-        Detach();
+        master.ReleaseActive();
         claimer.Release();
-        GetObserver().SubscribeDone();
+        Observer().SubscribeDone();
     }
 
-    void MqttMultipleAccess::ReceivedNotification(infra::BoundedConstString topic, infra::BoundedConstString payload)
+    infra::SharedPtr<infra::StreamWriter> MqttMultipleAccess::ReceivedNotification(infra::BoundedConstString topic, uint32_t payloadSize)
     {
-        GetObserver().ReceivedNotification(topic, payload);
-    }
-
-    void MqttMultipleAccess::ClosingConnection()
-    {
-        GetObserver().ClosingConnection();
+        return Observer().ReceivedNotification(topic, payloadSize);
     }
 
     void MqttMultipleAccess::FillTopic(infra::StreamWriter& writer) const
     {
-        GetObserver().FillTopic(writer);
+        Observer().FillTopic(writer);
     }
 
     void MqttMultipleAccess::FillPayload(infra::StreamWriter& writer) const
     {
-        GetObserver().FillPayload(writer);
+        Observer().FillPayload(writer);
     }
 }

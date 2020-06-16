@@ -14,14 +14,15 @@ namespace services
         : public HttpClientObserver
     {
     public:
-        MOCK_METHOD0(Connected, void());
-        MOCK_METHOD0(ClosingConnection, void());
+        MOCK_METHOD0(Attached, void());
+        MOCK_METHOD0(Detaching, void());
 
         MOCK_METHOD1(StatusAvailable, void(HttpStatusCode statusCode));
         MOCK_METHOD1(HeaderAvailable, void(HttpHeader header));
         MOCK_METHOD1(BodyAvailable, void(infra::SharedPtr<infra::StreamReader>&& reader));
         MOCK_METHOD0(BodyComplete, void());
         MOCK_METHOD1(SendStreamAvailable, void(infra::SharedPtr<infra::StreamWriter>&& writer));
+        MOCK_CONST_METHOD1(FillContent, void(infra::StreamWriter& writer));
     };
 
     class HttpClientObserverFactoryMock
@@ -44,8 +45,10 @@ namespace services
         MOCK_METHOD2(Options, void(infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Post, void(infra::BoundedConstString, infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Post, void(infra::BoundedConstString, std::size_t, HttpHeaders));
+        MOCK_METHOD2(Post, void(infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Put, void(infra::BoundedConstString, infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Put, void(infra::BoundedConstString, std::size_t, HttpHeaders));
+        MOCK_METHOD2(Put, void(infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Patch, void(infra::BoundedConstString, infra::BoundedConstString, HttpHeaders));
         MOCK_METHOD3(Delete, void(infra::BoundedConstString, infra::BoundedConstString, HttpHeaders));
         
@@ -53,14 +56,6 @@ namespace services
         MOCK_METHOD0(Close, void());
 
         MOCK_METHOD0(GetConnection, Connection&());
-
-        void AttachObserver(const infra::SharedPtr<HttpClientObserver>& observer)
-        {
-            this->observer = observer;
-            observer->Attach(*this);
-        }
-
-        infra::SharedPtr<HttpClientObserver> observer;
     };
 
     class HttpClientConnectorMock

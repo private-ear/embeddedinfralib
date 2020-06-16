@@ -1,6 +1,7 @@
 #ifndef SERVICES_EVENT_DISPATCHER_WITH_NETWORK_HPP
 #define SERVICES_EVENT_DISPATCHER_WITH_NETWORK_HPP
 
+#include "services/network/Multicast.hpp"
 #include "services/network_win/ConnectionWin.hpp"
 #include "services/network_win/DatagramWin.hpp"
 
@@ -9,7 +10,8 @@ namespace services
     class EventDispatcherWithNetwork
         : public infra::EventDispatcherWithWeakPtr::WithSize<50>
         , public ConnectionFactory
-        , public DatagramFactory
+        , public DatagramFactoryWithLocalIpBinding
+        , public Multicast
     {
     public:
         EventDispatcherWithNetwork();
@@ -20,6 +22,7 @@ namespace services
         void DeregisterListener(ListenerWin& listener);
         void DeregisterConnector(ConnectorWin& connector);
         void RegisterDatagram(const infra::SharedPtr<DatagramWin>& datagram);
+        void RegisterDatagramMultiple(const infra::SharedPtr<DatagramExchangeMultiple>& datagram);
 
     public:
         // Implementation of ConnectionFactory
@@ -27,14 +30,24 @@ namespace services
         virtual void Connect(ClientConnectionObserverFactory& factory) override;
         virtual void CancelConnect(ClientConnectionObserverFactory& factory) override;
 
-        // Implementation of DatagramFactory
+        // Implementation of DatagramFactoryWithLocalIpBinding
         virtual infra::SharedPtr<DatagramExchange> Listen(DatagramExchangeObserver& observer, uint16_t port, IPVersions versions = IPVersions::both) override;
         virtual infra::SharedPtr<DatagramExchange> Listen(DatagramExchangeObserver& observer, IPVersions versions = IPVersions::both) override;
         virtual infra::SharedPtr<DatagramExchange> Connect(DatagramExchangeObserver& observer, UdpSocket remote) override;
         virtual infra::SharedPtr<DatagramExchange> Connect(DatagramExchangeObserver& observer, uint16_t localPort, UdpSocket remote) override;
+        virtual infra::SharedPtr<DatagramExchange> Listen(DatagramExchangeObserver& observer, IPAddress localAddress, uint16_t port, IPVersions versions = IPVersions::both) override;
+        virtual infra::SharedPtr<DatagramExchange> Listen(DatagramExchangeObserver& observer, IPAddress localAddress, IPVersions versions = IPVersions::both) override;
+        virtual infra::SharedPtr<DatagramExchange> Connect(DatagramExchangeObserver& observer, IPAddress localAddress, UdpSocket remote) override;
+        virtual infra::SharedPtr<DatagramExchange> Connect(DatagramExchangeObserver& observer, UdpSocket local, UdpSocket remote) override;
+
+        // Implementation of Multicast
+        virtual void JoinMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv4Address multicastAddress) override;
+        virtual void LeaveMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv4Address multicastAddress) override;
+        virtual void JoinMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv6Address multicastAddress) override;
+        virtual void LeaveMulticastGroup(infra::SharedPtr<DatagramExchange> datagramExchange, IPv6Address multicastAddress) override;
 
     protected:
-        virtual void RequestExecution();
+        virtual void RequestExecution() override;
         virtual void Idle() override;
 
     private:
@@ -42,6 +55,7 @@ namespace services
         infra::IntrusiveList<ListenerWin> listeners;
         std::list<ConnectorWin> connectors;
         std::list<infra::WeakPtr<DatagramWin>> datagrams;
+        std::list<infra::WeakPtr<DatagramExchangeMultiple>> datagramsMultiple;
         WSAEVENT wakeUpEvent = WSACreateEvent();
     };
 }

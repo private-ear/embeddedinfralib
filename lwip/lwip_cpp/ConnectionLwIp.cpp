@@ -3,6 +3,9 @@
 
 namespace services
 {
+    infra::BoundedList<std::array<uint8_t, TCP_MSS>>::WithMaxSize<tcpSndQueueLen> ConnectionLwIp::sendMemoryPool;
+    infra::IntrusiveList<ConnectionLwIp> ConnectionLwIp::sendMemoryPoolWaiting;
+
     ConnectionLwIp::ConnectionLwIp(tcp_pcb* control)
         : control(control)
     {
@@ -16,6 +19,12 @@ namespace services
 
     ConnectionLwIp::~ConnectionLwIp()
     {
+        if (sendMemoryPoolWaiting.has_element(*this))
+            sendMemoryPoolWaiting.erase(*this);
+
+        if (receivedData != nullptr)
+            pbuf_free(receivedData);
+
         if (control)
         {
             tcp_pcb* c = control;
@@ -28,6 +37,7 @@ namespace services
     {
         assert(requestedSendSize == 0);
         assert(sendSize != 0 && sendSize <= MaxSendStreamSize());
+        really_assert(control != nullptr);
         requestedSendSize = sendSize;
         TryAllocateSendStream();
     }
@@ -61,7 +71,25 @@ namespace services
 
     void ConnectionLwIp::AbortAndDestroy()
     {
-        tcp_abort(control); // Err is called as a result, and this callback destroys this connection object
+        if (control)
+        {
+            auto controlCopy = control;
+            ResetControl();
+            tcp_abort(controlCopy);
+            ResetOwnership();
+        }
+    }
+
+    void ConnectionLwIp::SetSelfOwnership(const infra::SharedPtr<ConnectionObserver>& observer)
+    {
+        self = SharedFromThis();
+    }
+
+    void ConnectionLwIp::ResetOwnership()
+    {
+        if (IsAttached())
+            Detach();
+        self = nullptr;
     }
 
     IPAddress ConnectionLwIp::IpAddress() const
@@ -107,15 +135,23 @@ namespace services
         assert(streamWriter.Allocatable());
         if (!sendBuffers.full() && !sendMemoryPool.full() && sendBuffer.empty())
         {
+            if (sendMemoryPoolWaiting.has_element(*this))
+                sendMemoryPoolWaiting.erase(*this);
+
             sendMemoryPool.emplace_back();
             infra::ByteRange sendBuffer = infra::Head(infra::ByteRange(sendMemoryPool.back()), requestedSendSize);
             infra::EventDispatcherWithWeakPtr::Instance().Schedule([sendBuffer](const infra::SharedPtr<ConnectionLwIp>& self)
             {
                 infra::SharedPtr<infra::StreamWriter> stream = self->streamWriter.Emplace(*self, sendBuffer);
-                self->GetObserver().SendStreamAvailable(std::move(stream));
+                self->Observer().SendStreamAvailable(std::move(stream));
             }, SharedFromThis());
 
             requestedSendSize = 0;
+        }
+        else if (sendMemoryPool.full())
+        {
+            if (!sendMemoryPoolWaiting.has_element(*this))
+                sendMemoryPoolWaiting.push_back(*this);
         }
     }
 
@@ -147,24 +183,27 @@ namespace services
     {
         if (p != nullptr)
         {
-            for (pbuf* q = p; q != nullptr; q = q->next)
-                receiveBuffer.insert(receiveBuffer.end(), reinterpret_cast<uint8_t*>(q->payload), reinterpret_cast<uint8_t*>(q->payload) + q->len);
-            pbuf_free(p);
+            if (receivedData == nullptr)
+                receivedData = p;
+            else
+                pbuf_cat(receivedData, p);
 
-            if (!dataReceivedScheduled && HasObserver())
+            if (!dataReceivedScheduled && IsAttached())
             {
                 dataReceivedScheduled = true;
                 infra::EventDispatcherWithWeakPtr::Instance().Schedule([](const infra::SharedPtr<ConnectionLwIp>& self)
                 {
                     self->dataReceivedScheduled = false;
-                    self->GetObserver().DataReceived();
+                    self->Observer().DataReceived();
                 }, SharedFromThis());
             }
+            return ERR_OK;
         }
         else
+        {
             ResetOwnership();
-
-        return ERR_OK;
+            return ERR_ABRT;
+        }
     }
 
     void ConnectionLwIp::Err(err_t err)
@@ -182,8 +221,9 @@ namespace services
             if (sendBuffers.front().size() <= len)
             {
                 len -= static_cast<uint16_t>(sendBuffers.front().size());
+
+                RemoveFromPool(sendBuffers.front());
                 sendBuffers.pop_front();
-                sendMemoryPool.pop_front();
             }
             else
             {
@@ -198,6 +238,19 @@ namespace services
         return ERR_OK;
     }
 
+    void ConnectionLwIp::RemoveFromPool(infra::ConstByteRange range)
+    {
+        auto start = range.begin();
+        auto size = sendMemoryPool.size();
+        for (auto& range : sendMemoryPool)
+            if (range.data() == start)
+                sendMemoryPool.remove(range);
+        really_assert(size == sendMemoryPool.size() + 1);
+
+        if (!sendMemoryPoolWaiting.empty())
+            sendMemoryPoolWaiting.front().TryAllocateSendStream();
+    }
+
     ConnectionLwIp::StreamWriterLwIp::StreamWriterLwIp(ConnectionLwIp& connection, infra::ByteRange sendBuffer)
         : infra::ByteOutputStreamWriter(sendBuffer)
         , connection(connection)
@@ -207,22 +260,141 @@ namespace services
     {
         if (!Processed().empty() && connection.control != nullptr)
             connection.SendBuffer(Processed());
+        else if (!Processed().empty())
+            connection.RemoveFromPool(Processed());
         else
-            connection.sendMemoryPool.pop_back();
+            connection.RemoveFromPool(Remaining());
     }
 
     ConnectionLwIp::StreamReaderLwIp::StreamReaderLwIp(ConnectionLwIp& connection)
-        : infra::BoundedDequeInputStreamReader(connection.receiveBuffer)
-        , connection(connection)
+        : connection(connection)
+        , currentPbuf(connection.receivedData)
+        , offsetInCurrentPbuf(connection.consumed)
     {}
 
     void ConnectionLwIp::StreamReaderLwIp::ConsumeRead()
     {
-        uint16_t sizeRead = static_cast<uint16_t>(ConstructSaveMarker());
         if (connection.control != nullptr)
-            tcp_recved(connection.control, sizeRead);
-        connection.receiveBuffer.erase(connection.receiveBuffer.begin(), connection.receiveBuffer.begin() + sizeRead);
-        Rewind(0);
+            tcp_recved(connection.control, static_cast<uint16_t>(offset));
+
+        offset += connection.consumed;
+        while (offset != 0 && offset >= connection.receivedData->len)
+        {
+            offset -= connection.receivedData->len;
+            auto newReceivedData = connection.receivedData->next;
+            pbuf_ref(newReceivedData);
+            pbuf_dechain(connection.receivedData);
+            pbuf_free(connection.receivedData);
+            connection.receivedData = newReceivedData;
+            connection.consumed = 0;
+        }
+
+        connection.consumed = offset;
+        offset = 0;
+
+        currentPbuf = connection.receivedData;
+        offsetInCurrentPbuf = connection.consumed;
+    }
+
+    void ConnectionLwIp::StreamReaderLwIp::Extract(infra::ByteRange range, infra::StreamErrorPolicy& errorPolicy)
+    {
+        while (!range.empty())
+        {
+            auto chunk = ExtractContiguousRange(range.size());
+            if (chunk.empty())
+                break;
+
+            infra::Copy(chunk, infra::Head(range, chunk.size()));
+            range.pop_front(chunk.size());
+        }
+
+        errorPolicy.ReportResult(range.empty());
+    }
+
+    uint8_t ConnectionLwIp::StreamReaderLwIp::Peek(infra::StreamErrorPolicy& errorPolicy)
+    {
+        auto range = PeekContiguousRange(0);
+        errorPolicy.ReportResult(!range.empty());
+        if (!range.empty())
+            return range.front();
+        else
+            return 0;
+    }
+
+    infra::ConstByteRange ConnectionLwIp::StreamReaderLwIp::ExtractContiguousRange(std::size_t max)
+    {
+        auto chunk = infra::Head(PeekContiguousRange(0), max);
+
+        offset += chunk.size();
+        offsetInCurrentPbuf += chunk.size();
+
+        if (currentPbuf != nullptr && offsetInCurrentPbuf == currentPbuf->len)
+        {
+            currentPbuf = currentPbuf->next;
+            offsetInCurrentPbuf = 0;
+        }
+
+        return chunk;
+    }
+
+    infra::ConstByteRange ConnectionLwIp::StreamReaderLwIp::PeekContiguousRange(std::size_t start)
+    {
+        auto peekOffset = offsetInCurrentPbuf;
+        auto peekPbuf = currentPbuf;
+
+        while (start != 0 && peekPbuf != nullptr)
+        {
+            auto peekDelta = std::min(start, peekPbuf->len - peekOffset);
+            peekOffset += peekDelta;
+            start -= peekDelta;
+            if (peekOffset == peekPbuf->len)
+            {
+                peekOffset = 0;
+                peekPbuf = peekPbuf->next;
+            }
+        }
+
+        if (peekPbuf == nullptr)
+            return infra::ConstByteRange();
+        else
+            return infra::ConstByteRange(reinterpret_cast<const uint8_t*>(peekPbuf->payload) + peekOffset, reinterpret_cast<const uint8_t*>(peekPbuf->payload) + peekPbuf->len);
+    }
+
+    bool ConnectionLwIp::StreamReaderLwIp::Empty() const
+    {
+        return Available() == 0;
+    }
+
+    std::size_t ConnectionLwIp::StreamReaderLwIp::Available() const
+    {
+        if (connection.receivedData != nullptr)
+            return connection.receivedData->tot_len - connection.consumed - offset;
+        else
+            return 0;
+    }
+
+    std::size_t ConnectionLwIp::StreamReaderLwIp::ConstructSaveMarker() const
+    {
+        return offset;
+    }
+
+    void ConnectionLwIp::StreamReaderLwIp::Rewind(std::size_t marker)
+    {
+        offset = 0;
+        currentPbuf = connection.receivedData;
+        offsetInCurrentPbuf = connection.consumed;
+
+        while (marker != 0)
+        {
+            auto delta = std::min(marker, currentPbuf->len - offsetInCurrentPbuf);
+            offsetInCurrentPbuf += delta;
+            marker -= delta;
+            if (offsetInCurrentPbuf == currentPbuf->len)
+            {
+                offsetInCurrentPbuf = 0;
+                currentPbuf = currentPbuf->next;
+            }
+        }
     }
 
     ListenerLwIp::ListenerLwIp(AllocatorConnectionLwIp& allocator, uint16_t port, ServerConnectionObserverFactory& factory, IPVersions versions)
@@ -231,8 +403,9 @@ namespace services
     {
         tcp_pcb* pcb = tcp_new();
         assert(pcb != nullptr);
+        ip_set_option(pcb, SOF_REUSEADDR);
         if (versions == IPVersions::both)
-            err_t err = tcp_bind(pcb, IP_ADDR_ANY, port);
+            err_t err = tcp_bind(pcb, IP_ANY_TYPE, port);
         else if (versions == IPVersions::ipv4)
             err_t err = tcp_bind(pcb, IP4_ADDR_ANY, port);
         else
@@ -261,11 +434,10 @@ namespace services
         {
             factory.ConnectionAccepted([connection](infra::SharedPtr<services::ConnectionObserver> connectionObserver)
             {
-                if (connectionObserver)
+                if (connectionObserver && connection->control != nullptr)
                 {
-                    connectionObserver->Attach(*connection);
-                    connection->SetOwnership(connection, connectionObserver);
-                    connectionObserver->Connected();
+                    connection->SetSelfOwnership(connectionObserver);
+                    connection->Attach(connectionObserver);
                 }
             }, connection->IpAddress());
 
@@ -340,11 +512,10 @@ namespace services
             control = nullptr;
             clientFactory.ConnectionEstablished([connection](infra::SharedPtr<services::ConnectionObserver> connectionObserver)
             {
-                if (connectionObserver)
+                if (connectionObserver && connection->control != nullptr)
                 {
-                    connectionObserver->Attach(*connection);
-                    connection->SetOwnership(connection, connectionObserver);
-                    connectionObserver->Connected();
+                    connection->SetSelfOwnership(connectionObserver);
+                    connection->Attach(connectionObserver);
                 }
             });
 

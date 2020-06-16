@@ -105,14 +105,13 @@ namespace services
         , initialIdle(std::chrono::seconds(10), [this]()
             {
                 idle = true;
-                if (closeWhenIdle)
-                    Abort();
+                CheckIdleClose();
             })
     {}
 
-    void HttpServerConnectionObserver::Connected()
+    void HttpServerConnectionObserver::Attached()
     {
-        connection = &Subject();
+        this->connection = &Subject();
         RequestSendStream();
     }
 
@@ -144,7 +143,7 @@ namespace services
             ReceivedRequest(receiveStream, available);
     }
 
-    void HttpServerConnectionObserver::ClosingConnection()
+    void HttpServerConnectionObserver::Detaching()
     {
         streamWriter = nullptr;
     }
@@ -152,8 +151,7 @@ namespace services
     void HttpServerConnectionObserver::Close()
     {
         closeWhenIdle = true;
-        if (idle)
-            Abort();
+        CheckIdleClose();
     }
 
     void HttpServerConnectionObserver::Abort()
@@ -161,7 +159,7 @@ namespace services
         // TakeOverConnection may have been invoked, which leads to Subject() not being available. However, TakeOverConnection may have been invoked by a page
         // which is about to upgrade to a web connection, but which is not yet upgraded since it is waiting for storage. In that case, if the HttpServer
         // must close down, then we still need to invoke CloseAndDestroy on the connection. Therefore, connection is used instead of Subject()
-        connection->CloseAndDestroy();
+        connection->AbortAndDestroy();
     }
 
     void HttpServerConnectionObserver::SendResponse(const HttpResponse& response)
@@ -191,9 +189,15 @@ namespace services
         Subject().AckReceived();
 
         auto& connection = Subject();
+        auto newObserverPtr = infra::MakeContainedSharedObject(newObserver, connection.ObserverPtr());
         Detach();
-        newObserver.Attach(connection);
-        connection.SwitchObserver(infra::MakeContainedSharedObject(newObserver, connection.Observer()));
+        connection.Attach(newObserverPtr);
+    }
+
+    void HttpServerConnectionObserver::SetIdle()
+    {
+        idle = true;
+        CheckIdleClose();
     }
 
     HttpPage* HttpServerConnectionObserver::PageForRequest(const HttpRequestParser& request)
@@ -272,12 +276,10 @@ namespace services
         RequestSendStream();
         if (!sendingResponse)
         {
-            idle = true;
             requestInProgress = false;
             send100Response = false;
             buffer.clear();
-            if (closeWhenIdle)
-                Abort();
+            SetIdle();
         }
     }
 
@@ -294,6 +296,12 @@ namespace services
         stream << buffer.substr(0, available);
         buffer.erase(0, available);
         sendingResponse = !buffer.empty();
+    }
+    
+    void HttpServerConnectionObserver::CheckIdleClose()
+    {
+        if (closeWhenIdle && idle)
+            ConnectionObserver::Close();
     }
 
     DefaultHttpServer::DefaultHttpServer(infra::BoundedString& buffer, ConnectionFactory& connectionFactory, uint16_t port)

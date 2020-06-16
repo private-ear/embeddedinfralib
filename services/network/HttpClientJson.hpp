@@ -26,6 +26,8 @@ namespace services
 
         HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo);
         HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo, infra::Duration timeoutDuration);
+        HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo, NoAutoConnect);
+        HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo, infra::Duration timeoutDuration, NoAutoConnect);
         ~HttpClientJson();
 
         void Cancel(const infra::Function<void()>& onDone);
@@ -34,8 +36,8 @@ namespace services
         virtual infra::JsonObjectVisitor& TopJsonObjectVisitor() = 0;
 
         // Implementation of HttpClientObserver
-        virtual void Connected() override;  // Default implementation. Override for behaviour other than an HTTP GET request
-        virtual void ClosingConnection() override;
+        virtual void Attached() override;  // Default implementation. Override for behaviour other than an HTTP GET request
+        virtual void Detaching() override;
         virtual void StatusAvailable(services::HttpStatusCode statusCode) override;
         virtual void HeaderAvailable(services::HttpHeader header) override;
         virtual void BodyAvailable(infra::SharedPtr<infra::StreamReader>&& reader) override;

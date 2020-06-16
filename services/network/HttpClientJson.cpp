@@ -12,6 +12,16 @@ namespace services
         , jsonParserCreator(connectionInfo.jsonParserCreator)
     {}
 
+    HttpClientJson::HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo, NoAutoConnect)
+        : services::HttpClientBasic(url, connectionInfo.port, connectionInfo.httpClientConnector, noAutoConnect)
+        , jsonParserCreator(connectionInfo.jsonParserCreator)
+    {}
+
+    HttpClientJson::HttpClientJson(infra::BoundedString url, const ConnectionInfo& connectionInfo, infra::Duration timeoutDuration, NoAutoConnect)
+        : services::HttpClientBasic(url, connectionInfo.port, connectionInfo.httpClientConnector, timeoutDuration, noAutoConnect)
+        , jsonParserCreator(connectionInfo.jsonParserCreator)
+    {}
+
     HttpClientJson::~HttpClientJson()
     {
         if (destructedIndication != nullptr)
@@ -23,16 +33,16 @@ namespace services
         HttpClientBasic::Cancel(onDone);
     }
 
-    void HttpClientJson::Connected()
+    void HttpClientJson::Attached()
     {
         HttpClientObserver::Subject().Get(Path(), Headers());
     }
 
-    void HttpClientJson::ClosingConnection()
+    void HttpClientJson::Detaching()
     {
         readerPtr = nullptr;
         jsonParser = infra::none;
-        services::HttpClientBasic::ClosingConnection();
+        services::HttpClientBasic::Detaching();
     }
 
     void HttpClientJson::StatusAvailable(services::HttpStatusCode statusCode)
@@ -43,7 +53,8 @@ namespace services
 
     void HttpClientJson::HeaderAvailable(services::HttpHeader header)
     {
-        if (header.Field() == "content-type" && header.Value() != "application/json")
+        if (infra::CaseInsensitiveCompare(header.Field(), "Content-Type") &&
+            header.Value() != "application/json")
             ContentError();
     }
 
