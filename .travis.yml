@@ -36,9 +36,7 @@ matrix:
         - STATIC_ANALYSIS=1
 
     - os: osx
-      osx_image: xcode11.2
-      env:
-        - MACOSX_DEPLOYMENT_TARGET=10.15
+      osx_image: xcode11.6
 
 before_install:
   - eval "${MATRIX_EVAL}"
