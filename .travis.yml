@@ -37,6 +37,8 @@ matrix:
 
     - os: osx
       osx_image: xcode11.6
+      env:
+        - CMAKE_EXTRA_ARGS="-DCMAKE_INSTALL_RPATH=../Install/components/protobuf.libprotobuf/Darwin/bin"
 
 before_install:
   - eval "${MATRIX_EVAL}"
@@ -47,7 +49,7 @@ install:
 script:
   - cmake -E make_directory Build
   - cd Build
-  - if [[ $STATIC_ANALYSIS ]]; then cmake .. -DCCOLA_ENABLE_COVERAGE=ON -DCCOLA_DIR=ccola -DCCOLA_INSTALL_DIR=Install -DCMAKE_BUILD_TYPE=${BUILD_TYPE}; else cmake .. -DCCOLA_DIR=ccola -DCCOLA_INSTALL_DIR=Install -DCMAKE_BUILD_TYPE=${BUILD_TYPE}; fi
+  - if [[ $STATIC_ANALYSIS ]]; then cmake .. -DCCOLA_ENABLE_COVERAGE=ON -DCCOLA_DIR=ccola -DCCOLA_INSTALL_DIR=Install -DCMAKE_BUILD_TYPE=${BUILD_TYPE} ${CMAKE_EXTRA_ARGS}; else cmake .. -DCCOLA_DIR=ccola -DCCOLA_INSTALL_DIR=Install -DCMAKE_BUILD_TYPE=${BUILD_TYPE} ${CMAKE_EXTRA_ARGS}; fi
   - if [[ $STATIC_ANALYSIS ]]; then build-wrapper-linux-x86-64 --out-dir ../sonar-build-wrapper cmake --build . --config ${BUILD_TYPE}; else cmake --build . --config ${BUILD_TYPE}; fi
   - ctest -C ${BUILD_TYPE} -T Test --output-on-failure
   - if [[ $STATIC_ANALYSIS ]]; then gcovr --sonarqube=../coverage.xml -r ..; fi
