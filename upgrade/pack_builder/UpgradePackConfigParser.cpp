@@ -21,7 +21,8 @@ namespace application
     void UpgradePackConfigParser::CheckValidJson()
     {
         for (auto it : json)
-        {}
+        {
+        }
 
         if (json.Error())
             throw ParseException("ConfigParser error: invalid JSON");
@@ -44,7 +45,7 @@ namespace application
 
         std::vector<std::pair<std::string, std::string>> result;
 
-        for (infra::JsonObjectIterator it = components->begin(); it != components->end() ; ++it)
+        for (infra::JsonObjectIterator it = components->begin(); it != components->end(); ++it)
             if (it->value.Is<infra::JsonString>())
                 result.push_back(std::make_pair(it->key.ToStdString(), it->value.Get<infra::JsonString>().ToStdString()));
             else
@@ -79,7 +80,7 @@ namespace application
     {
         if (!json.HasKey("upgrade_configuration"))
             throw ParseException("ConfigParser error: requested key upgrade_configuration is missing");
-        
+
         if (json.GetOptionalObject("upgrade_configuration") == infra::none)
             throw ParseException("ConfigParser error: upgrade_configuration should be an object");
         else
@@ -89,10 +90,12 @@ namespace application
     std::string UpgradePackConfigParser::GetOutputFilename()
     {
         if (json.HasKey("output_filename"))
+        {
             if (json.GetOptionalString("output_filename") == infra::none)
                 throw ParseException(std::string("ConfigParser error: output filename should be a string"));
             else
                 return json.GetString("output_filename").ToStdString();
+        }
 
         return "";
     }
@@ -100,10 +103,12 @@ namespace application
     std::string UpgradePackConfigParser::GetUpgradeKeys()
     {
         if (json.HasKey("upgrade_keys"))
+        {
             if (json.GetOptionalString("upgrade_keys") == infra::none)
                 throw ParseException(std::string("ConfigParser error: upgrade_keys should be a string"));
             else
                 return json.GetString("upgrade_keys").ToStdString();
+        }
 
         return "";
     }
@@ -112,10 +117,12 @@ namespace application
     {
         auto upgradeConfiguration = GetUpgradeConfiguration();
         if (upgradeConfiguration.HasKey("product_name"))
+        {
             if (upgradeConfiguration.GetOptionalString("product_name") == infra::none)
                 throw ParseException(std::string("ConfigParser error: upgrade_configuration/product_name should be a string"));
             else
                 return upgradeConfiguration.GetString("product_name").ToStdString();
+        }
 
         return "";
     }
@@ -124,10 +131,12 @@ namespace application
     {
         auto upgradeConfiguration = GetUpgradeConfiguration();
         if (upgradeConfiguration.HasKey("product_version"))
+        {
             if (upgradeConfiguration.GetOptionalString("product_version") == infra::none)
                 throw ParseException(std::string("ConfigParser error: upgrade_configuration/product_version should be a string"));
             else
                 return upgradeConfiguration.GetString("product_version").ToStdString();
+        }
 
         return "";
     }
@@ -136,10 +145,12 @@ namespace application
     {
         auto upgradeConfiguration = GetUpgradeConfiguration();
         if (upgradeConfiguration.HasKey("component_name"))
+        {
             if (upgradeConfiguration.GetOptionalString("component_name") == infra::none)
                 throw ParseException(std::string("ConfigParser error: upgrade_configuration/component_name should be a string"));
             else
                 return upgradeConfiguration.GetString("component_name").ToStdString();
+        }
 
         return "";
     }
@@ -148,10 +159,12 @@ namespace application
     {
         auto upgradeConfiguration = GetUpgradeConfiguration();
         if (upgradeConfiguration.HasKey("component_version"))
+        {
             if (upgradeConfiguration.GetOptionalInteger("component_version") == infra::none)
                 throw ParseException(std::string("ConfigParser error: upgrade_configuration/component_version should be an integer"));
             else
                 return upgradeConfiguration.GetInteger("component_version");
+        }
 
         return -1;
     }
