@@ -11,6 +11,7 @@
 #include <cstring>
 #include <ostream>
 #include <string>
+#include <limits>
 
 namespace infra
 {
